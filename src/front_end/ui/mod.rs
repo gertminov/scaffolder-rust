@@ -1,8 +1,7 @@
-
+use std::io;
 
 mod ui;
 
-pub fn print_hallo() {
-    ui::print_hallo()
+pub fn init_ui() -> io::Result<()>{
+    ui::init_ui()
 }
-
