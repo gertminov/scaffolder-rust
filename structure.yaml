@@ -1,16 +1,5 @@
 project:
-  types:
-    - Songs
-    - Beat
-    - Podcast
-  software:
-    - Ableton
-    - Fl Studio
-    - Pro Tools
-
-
-project2:
-  defaultLocations: "~/music"
+  default_location: "~/music"
   children:
     - Project:
         options:

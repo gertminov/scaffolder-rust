@@ -8,3 +8,6 @@ edition = "2021"
 [dependencies]
 crossterm = "0.27.0"
 ratatui = "0.24.0"
+serde = "1.0.192"
+serde_yaml = "0.9.27"
+slab_tree = "0.3.2"
