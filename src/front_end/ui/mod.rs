@@ -1,4 +1,4 @@
-use std::io;
+use std::{error::Error, io};
 
 mod ui;
 
