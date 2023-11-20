@@ -11,6 +11,7 @@ use crossterm::{
 };
 
 use ratatui::{prelude::*, widgets::*};
+use ratatui::widgets::block::{Position, Title};
 
 enum InputMode {
     Normal,
@@ -86,8 +87,9 @@ impl<'a> StatefulList<'a>  {
 }
 
 struct App<'a> {
-    title: String,
-    content: Data<'a>, //StatefulList<(&'a str, bool)>),
+    question: String,
+    content: Data<'a>,
+    tree_content: String,
     input: String,
     input_mode: InputMode,
     cursor_position: usize,
@@ -95,9 +97,9 @@ struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    fn new(title: String) -> App<'a> {
+    fn new(question: String, tree_content: String) -> App<'a> {
         App {
-            title,
+            question,
             content:Data::Select(StatefulList::with_items(vec![
                 ("item0", false),
                 ("item1", false),
@@ -106,6 +108,7 @@ impl<'a> App<'a> {
                 ("item4", false),
                 ("item5", false),
                 ], false)),
+            tree_content,
             input: String::new(),
             input_mode: InputMode::Normal,
             cursor_position: 0,
@@ -166,7 +169,16 @@ impl<'a> App<'a> {
     fn reset_cursor(&mut self) {
         self.cursor_position = 0;
     }
+    fn cursor_end(&mut self) {
+        match &self.content {
+            Data::TextInput(input) => {
+                self.cursor_position = input.len();
+            },
 
+            _ => {}
+        }
+
+    }
     /*fn submit_message(&mut self) {
         self.messages.push(self.input.clone());
         self.input.clear();
@@ -194,7 +206,6 @@ impl<'a> App<'a> {
 }
 
 
-
 pub fn init_ui() -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -202,7 +213,7 @@ pub fn init_ui() -> io::Result<()> {
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    let  app = App::new( String::from("Chose:"));
+    let  app = App::new( String::from("Chose: "),String::from("Preview here"));
 
     let res = run_app(&mut terminal, app);
 
@@ -225,7 +236,6 @@ fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
     ) -> io::Result<()> {
-
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
@@ -245,7 +255,10 @@ fn run_app<B: Backend>(
                                 _ => {}
                             }
                             Data::TextInput(_) => match key.code {
-                                KeyCode::Char('e') => { app.input_mode = InputMode::Editing }
+                                KeyCode::Char('e') | KeyCode::Down | KeyCode::Enter => {
+                                    app.input_mode = InputMode::Editing;
+                                    app.cursor_end();
+                                }
                                 KeyCode::Right => app.next_content(),
 
                                 KeyCode::Char('q') | KeyCode::Esc=> return Ok(()),
@@ -256,20 +269,20 @@ fn run_app<B: Backend>(
                     InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
                         //KeyCode::Enter => app.submit_message(),
                         KeyCode::Char(to_insert) => {
-                        app.enter_char(to_insert);
+                            if to_insert.is_ascii() {
+                                app.enter_char(to_insert);
+                            }
+                            else {
+                                app.output = String::from("Non-ASCII char is not allowed");
+                            }
                         }
-                        KeyCode::Backspace => {
-                        app.delete_char();
-                        }
-                        KeyCode::Left => {
-                        app.move_cursor_left();
-                        }
-                        KeyCode::Right => {
-                        app.move_cursor_right();
-                        }
-                        KeyCode::Esc => {
-                        app.input_mode = InputMode::Normal;
-                        }
+
+                        KeyCode::Backspace => { app.delete_char(); }
+                        KeyCode::Left => { app.move_cursor_left(); }
+                        KeyCode::Right => { app.move_cursor_right(); }
+                        KeyCode::Esc | KeyCode::Up => { app.input_mode = InputMode::Normal; }
+                        KeyCode::End => { app.cursor_end(); }
+                        KeyCode::Home => { app.reset_cursor(); }
                         _ => {}
 
                     }
@@ -283,7 +296,6 @@ fn run_app<B: Backend>(
 fn ui(f: &mut Frame, app: &mut App) {
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
-        .margin(1)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
@@ -291,8 +303,16 @@ fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(f.size());
 
+    let padding = Padding::uniform(10);
     f.render_widget(
-        Block::new().borders(Borders::TOP).title("Title Bar"),
+        Block::new().borders(Borders::TOP)
+            .title(
+                Title::from(" Project Scaffolder ").position(Position::Top).alignment(Alignment::Center),
+            )
+            .title(
+                Title::from(" Press q to quit").position(Position::Top).alignment(Alignment::Right),
+            )
+            .style(Style::default()),
         main_layout[0],
     );
 
@@ -325,13 +345,12 @@ fn ui(f: &mut Frame, app: &mut App) {
                     })
                     .collect();
 
-
             // Create a List from all list items and highlight the currently selected one
             let items = List::new(items)
-                .block(Block::default().borders(Borders::NONE).title(app.title.clone()))
+                .block(Block::default().borders(Borders::NONE).title(app.question.clone()))
                 .style(Style::default().fg(Color::White))
-                .highlight_style(Style::default().fg(Color::LightBlue).add_modifier(Modifier::BOLD))
-                .highlight_symbol(">>");
+                .highlight_style(Style::default().bg(Color::LightBlue).add_modifier(Modifier::BOLD))
+                .highlight_symbol("> ");
 
             let mut state = list.state.clone();
             // We can now render the item list
@@ -339,29 +358,36 @@ fn ui(f: &mut Frame, app: &mut App) {
         }
 
         Data::TextInput(content) => {
-            f.render_widget(
-                Paragraph::new(content.clone())
-                    .block(Block::default().borders(Borders::NONE).title(app.title.clone())),
-                main_layout[1],
-            );
+
             match &app.input_mode {
-                InputMode::Normal =>
+                InputMode::Normal => {}
                 // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
-                    {}
+
 
                 InputMode::Editing => {
                     // Make the cursor visible
                     f.set_cursor(
-                        // Draw the cursor at the current position in the input field.
-                        // This position is can be controlled via the left and right arrow key
-                        main_layout[1].x + app.cursor_position as u16 + 0,
-                        // Move one line down, from the border to the input line
-                        main_layout[1].y + 1,
+                        main_layout[1].x + app.cursor_position as u16  + 3,
+                        main_layout[1].y + 2,
                     )
                 }
             }
+            let text_input = String::from("> ") + content;
+            f.render_widget(
+                Paragraph::new(text_input).wrap(Wrap {trim: false })
+                    .block(Block::default().borders(Borders::NONE).title(app.question.clone())),
+                inner_layout[0],
+            );
+
         }
     }
+    f.render_widget(
+        Paragraph::new(app.tree_content.clone())
+            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
+        inner_layout[1],
+    );
+
+
     f.render_widget(
         Paragraph::new(app.output.clone())
             .block(Block::default().borders(Borders::NONE)),
