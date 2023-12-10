@@ -47,7 +47,27 @@ fn walk_project(project: &Mapping, root: &mut NodeMut<NodeType>) {
     let children = project.get("children");
     let options = project.get("options");
     let child_options = project.get("childoptions");
-
+    match child_options{
+        Some(childs) => {
+            for child in childs.as_sequence().unwrap() {
+                if let Some(child_as_mapping) = child.as_mapping() {
+                    let keys = child_as_mapping.keys();
+                    for key in keys {
+                        if let Some(key_str) = key.as_str() {
+                            let mut node = root.append(NodeType::Child {name: String::from(key_str)});
+                            if let Some(value_of_child_as_mapping) = child_as_mapping.get(key_str).unwrap().as_mapping() {
+                                walk_project(value_of_child_as_mapping, &mut node);
+                            }
+                        }
+                    }
+                }
+                else if let Some(sequence_as_string) = child.as_str() {
+                    root.append(NodeType::Child {name: String::from(sequence_as_string)});
+                }
+            }
+        }
+        None => {}
+    }
     match children{
        Some(childs) => {
             for child in childs.as_sequence().unwrap() {
@@ -68,44 +88,9 @@ fn walk_project(project: &Mapping, root: &mut NodeMut<NodeType>) {
         None => {}
     }
     match options{
-        Some(childs) => {
-            for child in childs.as_sequence().unwrap() {
-                if let Some(child_as_mapping) = child.as_mapping() {
-                    let keys = child_as_mapping.keys();
-                    for key in keys {
-                        if let Some(key_str) = key.as_str() {
-                            let mut node = root.append(NodeType::Child {name: String::from(key_str)});
-                            if let Some(value_of_child_as_mapping) = child_as_mapping.get(key_str).unwrap().as_mapping() {
-                                walk_project(value_of_child_as_mapping, &mut node);
-                            }
-                        }
-                    }
-                }
-                else if let Some(sequence_as_string) = child.as_str() {
-                    root.append(NodeType::Child {name: String::from(sequence_as_string)});
-                }
-            }
-        }
-        None => {}
-    }
-    match child_options{
-        Some(childs) => {
-            for child in childs.as_sequence().unwrap() {
-                if let Some(child_as_mapping) = child.as_mapping() {
-                    let keys = child_as_mapping.keys();
-                    for key in keys {
-                        if let Some(key_str) = key.as_str() {
-                            let mut node = root.append(NodeType::Child {name: String::from(key_str)});
-                            if let Some(value_of_child_as_mapping) = child_as_mapping.get(key_str).unwrap().as_mapping() {
-                                walk_project(value_of_child_as_mapping, &mut node);
-                            }
-                        }
-                    }
-                }
-                else if let Some(sequence_as_string) = child.as_str() {
-                    root.append(NodeType::Child {name: String::from(sequence_as_string)});
-                }
-            }
+        Some(opts) => {
+            /*let opt_vec = opts.as_sequence().expect("found options key but no options")
+                .map(|entry| entry.as_str()).flatten();*/
         }
         None => {}
     }

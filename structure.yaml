@@ -1,19 +1,21 @@
 project:
   default_location: "~/music"
+  options:
+    - Song
+    - Beat
+    - Podcast
   children:
-    - Project:
-        options:
-          - Song
-          - Beat
-          - Podcast
+    - Folder:
+        options: "project_name"
         children:
-          - Part 1
-          - Part 2
-          - Part 3
-        childoptions:
-          - Ableton
-          - Fl Studio
-    - Output:
-        children:
-          - Master
-          - Stems
+          - Project:
+              children:
+                - Part1
+                - Part2
+          - Output:
+              children:
+                - Master
+                - Stems
+
+
+
