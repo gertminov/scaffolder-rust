@@ -1,7 +1,7 @@
 use std::{
     //error::Error,
     io,
-
+    fmt,
 };
 
 use crossterm::{
@@ -12,6 +12,8 @@ use crossterm::{
 
 use ratatui::{prelude::*, widgets::*};
 use ratatui::widgets::block::{Position, Title};
+
+//use termtree::Tree;
 
 enum InputMode {
     Normal,
