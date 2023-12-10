@@ -6,6 +6,10 @@ project:
           - Song
           - Beat
           - Podcast
+        children:
+          - Part 1
+          - Part 2
+          - Part 3
         childoptions:
           - Ableton
           - Fl Studio
