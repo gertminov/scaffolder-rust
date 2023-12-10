@@ -1,5 +1,8 @@
-pub mod backend;
+use std::io;
+//pub mod backend;
+
 pub mod front_end;
-fn main() {
-    backend::yaml::parse_yaml("./structure.yaml");
+fn main() -> io::Result<()>{
+    front_end::ui::init_ui()
 }
+
