@@ -1,0 +1,11 @@
+project:
+  default_location: "~/music"
+  options:
+    - Song
+    - Beat
+    - Podcast
+  children:
+    - Project:
+        options: ""
+
+
