@@ -4,40 +4,11 @@ use serde::Deserialize;
 use serde_yaml::{Mapping, Sequence, Value};
 use slab_tree::*;
 use slab_tree::NodeMut;
+use crate::backend;
+use backend::tree::nodes::LeafNodeType;
 
 
-pub enum LeafNodeType {
-    Text { name: String },
-    Option { options: Vec<String>, name: String },
-    TextInput { name: String, input: String },
-}
-
-impl LeafNodeType {
-    fn get_name(&self) -> &str {
-        match self {
-            LeafNodeType::Text { name } => { name }
-            LeafNodeType::Option { name, .. } => { name }
-            LeafNodeType::TextInput { name, .. } => { name }
-        }
-    }
-}
-
-
-impl Debug for LeafNodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LeafNodeType::Text { name } => write!(f, "{}", name),
-            LeafNodeType::Option { name, options } => {
-                let options_as_string: String = options.join(", ");
-                write!(f, "{:?} with [{}]", name, options_as_string)
-            }
-            LeafNodeType::TextInput { name, input } => write!(f, "{:?} input: {}", name, input),
-            // Add formatting for additional variants
-        }
-    }
-}
-
-pub fn parse_project_yaml(yaml_str: &str) {
+pub fn parse_project_yaml(yaml_str: &str) -> Tree<LeafNodeType> {
     let de = serde_yaml::Deserializer::from_str(yaml_str);
     let value = Value::deserialize(de).expect("error while deserialzing");
     let mapping = value.as_mapping().expect("No Mapping");
@@ -50,10 +21,24 @@ pub fn parse_project_yaml(yaml_str: &str) {
     let mut tree = TreeBuilder::new().with_root(root_node).build();
     walk_project(project, &mut tree.root_mut().unwrap());
 
-    let mut s = String::new();
-    tree.write_formatted(&mut s).unwrap();
-    println!("{}", s);
+    tree
 }
+
+fn walk_project(project: &Mapping, parent: &mut NodeMut<LeafNodeType>) {
+    let children_opt = project.get("children")
+        .map(|c| c.as_sequence())
+        .flatten();
+
+    let child_options = project.get("childoptions")
+        .map(|o| o.as_sequence())
+        .flatten()
+        .map(|s| get_options(s));
+
+    if let Some(children) = children_opt {
+        visit_children(children, parent, child_options);
+    }
+}
+
 
 fn visit_children(children: &Sequence, parent: &mut NodeMut<LeafNodeType>, child_options: Option<Vec<String>>) {
     for child in children {
@@ -78,7 +63,7 @@ fn visit_children(children: &Sequence, parent: &mut NodeMut<LeafNodeType>, child
     }
 }
 
-fn visit_options(options: &Sequence) -> Vec<String> {
+fn get_options(options: &Sequence) -> Vec<String> {
     options.iter().map(|o|
         o.as_str().expect(format!("could not read option: {:?}", o).as_str()).to_string()
     )
@@ -90,8 +75,9 @@ fn get_node_type(project: &Mapping, name: &str, child_options: &Option<Vec<Strin
     let seq_options = options
         .map(|o| o.as_sequence())
         .flatten()
-        .map(|s| visit_options(s));
+        .map(|s| get_options(s));
 
+    // concat child_options to options or use child_options if options is None
     let all_options = match (seq_options, child_options) {
         (None, None) => { None }
         (Some(opt_list), None) => { Some(opt_list) }
@@ -110,16 +96,4 @@ fn get_node_type(project: &Mapping, name: &str, child_options: &Option<Vec<Strin
     } else {
         LeafNodeType::Text { name: name.to_string() }
     };
-}
-
-fn walk_project(project: &Mapping, parent: &mut NodeMut<LeafNodeType>) {
-    let children_opt = project.get("children").map(|c| c.as_sequence()).flatten();
-    let child_options = project.get("childoptions")
-        .map(|o| o.as_sequence())
-        .flatten()
-        .map(|s| visit_options(s));
-
-    if let Some(children) = children_opt {
-        visit_children(children, parent, child_options);
-    }
 }
