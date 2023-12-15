@@ -11,9 +11,6 @@ project:
               options: ""
               children:
                 - Project
-  #                  options:
-  #                    - Ableton
-  #                    - Fl Studio
                 - Output:
                     children:
                       - Master

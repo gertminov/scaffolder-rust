@@ -1,97 +1,99 @@
 use std::fmt::Debug;
-use std::string::ToString;
-use crossterm::event::Event::Key;
-use serde::de::Unexpected::Str;
-use serde::{Deserialize, Serialize};
+
+use serde::Deserialize;
 use serde_yaml::{Mapping, Sequence, Value};
 use slab_tree::*;
 use slab_tree::NodeMut;
+use crate::backend;
+use backend::tree::nodes::LeafNodeType;
 
-enum NodeType {
-    Child{name: String},
-    Option{options: Vec<String>, name: String },
-    TextInput{input: String, name: String}
-}
 
-impl std::fmt::Debug for NodeType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            NodeType::Child{name} => write!(f, "{}", name),
-            NodeType::Option{options, name} => {
-                let options_as_string: String = options.join(", ");
-                write!(f, "{} with [{}]", name, options_as_string)
-            },
-            NodeType::TextInput {input, name} => write!(f, "{}: {}", name, input ),
-            // Add formatting for additional variants
-        }
-    }
-}
-pub fn parse_project_yaml(yaml_str: &str){
+pub fn parse_project_yaml(yaml_str: &str) -> Tree<LeafNodeType> {
     let de = serde_yaml::Deserializer::from_str(yaml_str);
     let value = Value::deserialize(de).expect("error while deserialzing");
     let mapping = value.as_mapping().expect("No Mapping");
     let project = mapping.get("project").map(|p| p.as_mapping()).flatten().expect("No Project");
     let default_location = project.get("default_location").map(|l| l.as_str()).flatten().unwrap_or("~/");
-    let root_node = NodeType::TextInput {name: String::from("Location"), input: String::from(default_location)};
+    let root_node = LeafNodeType::TextInput {
+        name: "Location".to_string(),
+        input: default_location.to_string(),
+    };
     let mut tree = TreeBuilder::new().with_root(root_node).build();
-    println!("{:?}\n", project);
-    walk_project(project,&mut tree.root_mut().unwrap());
+    walk_project(project, &mut tree.root_mut().unwrap());
 
-    let mut s = String::new();
-    tree.write_formatted(&mut s).unwrap();
-    println!("{}", s);
+    tree
 }
 
-fn walk_project(project: &Mapping, root: &mut NodeMut<NodeType>) {
-    //println!("{:?}\n", project);
-    let children = project.get("children");
+fn walk_project(project: &Mapping, parent: &mut NodeMut<LeafNodeType>) {
+    let children_opt = project.get("children")
+        .map(|c| c.as_sequence())
+        .flatten();
+
+    let child_options = project.get("childoptions")
+        .map(|o| o.as_sequence())
+        .flatten()
+        .map(|s| get_options(s));
+
+    if let Some(children) = children_opt {
+        visit_children(children, parent, child_options);
+    }
+}
+
+
+fn visit_children(children: &Sequence, parent: &mut NodeMut<LeafNodeType>, child_options: Option<Vec<String>>) {
+    for child in children {
+        if let Some(child_as_map) = child.as_mapping() {
+            let (node_name, children) = child_as_map.iter().next()
+                .expect("Warum kein child. WTF");
+            if let Some(key) = node_name.as_str() {
+                if let Some(value_of_child_as_mapping) = children.as_mapping() {
+                    let node_type = get_node_type(value_of_child_as_mapping, key, &child_options);
+                    let mut node = parent.append(node_type);
+                    walk_project(value_of_child_as_mapping, &mut node);
+                }
+            }
+        } else if let Some(leaf) = child.as_str() {
+            if let Some(opts) = &child_options {
+                let node_type = get_node_type(&Mapping::new(), leaf, &Some(opts.clone()));
+                parent.append(node_type);
+            } else {
+                parent.append(LeafNodeType::Text { name: leaf.to_string() });
+            }
+        }
+    }
+}
+
+fn get_options(options: &Sequence) -> Vec<String> {
+    options.iter().map(|o|
+        o.as_str().expect(format!("could not read option: {:?}", o).as_str()).to_string()
+    )
+        .collect()
+}
+
+fn get_node_type(project: &Mapping, name: &str, child_options: &Option<Vec<String>>) -> LeafNodeType {
     let options = project.get("options");
-    let child_options = project.get("childoptions");
-    match child_options{
-        Some(childs) => {
-            for child in childs.as_sequence().unwrap() {
-                if let Some(child_as_mapping) = child.as_mapping() {
-                    let keys = child_as_mapping.keys();
-                    for key in keys {
-                        if let Some(key_str) = key.as_str() {
-                            let mut node = root.append(NodeType::Child {name: String::from(key_str)});
-                            if let Some(value_of_child_as_mapping) = child_as_mapping.get(key_str).unwrap().as_mapping() {
-                                walk_project(value_of_child_as_mapping, &mut node);
-                            }
-                        }
-                    }
-                }
-                else if let Some(sequence_as_string) = child.as_str() {
-                    root.append(NodeType::Child {name: String::from(sequence_as_string)});
-                }
-            }
+    let seq_options = options
+        .map(|o| o.as_sequence())
+        .flatten()
+        .map(|s| get_options(s));
+
+    // concat child_options to options or use child_options if options is None
+    let all_options = match (seq_options, child_options) {
+        (None, None) => { None }
+        (Some(opt_list), None) => { Some(opt_list) }
+        (None, Some(child_opts)) => { Some(child_opts.iter().map(|s| s.clone()).collect()) }
+        (Some(opt_list), Some(child_opts)) => { Some(child_opts.iter().map(|s| s.clone()).chain(opt_list).collect()) }
+    };
+
+
+    return if let Some(opt_list) = all_options {
+        LeafNodeType::Option {
+            options: opt_list,
+            name: name.to_string(),
         }
-        None => {}
-    }
-    match children{
-       Some(childs) => {
-            for child in childs.as_sequence().unwrap() {
-                if let Some(child_as_mapping) = child.as_mapping() {
-                    let key_opt = child_as_mapping.keys().next().map(|key| key.as_str()).flatten();
-                    if let Some(key) = key_opt {
-                        let mut node = root.append(NodeType::Child {name: String::from(key)});
-                        if let Some(value_of_child_as_mapping) = child_as_mapping.get(key).unwrap().as_mapping() {
-                            walk_project(value_of_child_as_mapping, &mut node);
-                        }
-                    }
-                }
-                else if let Some(sequence_as_string) = child.as_str() {
-                    root.append(NodeType::Child {name: String::from(sequence_as_string)});
-                }
-            }
-        }
-        None => {}
-    }
-    match options{
-        Some(opts) => {
-            /*let opt_vec = opts.as_sequence().expect("found options key but no options")
-                .map(|entry| entry.as_str()).flatten();*/
-        }
-        None => {}
-    }
+    } else if let Some(opt_str) = options.map(|o| o.as_str()).flatten() {
+        LeafNodeType::TextInput { name: name.to_string(), input: opt_str.to_string() }
+    } else {
+        LeafNodeType::Text { name: name.to_string() }
+    };
 }
