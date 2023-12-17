@@ -12,8 +12,16 @@ use crossterm::{
 
 use ratatui::{prelude::*, widgets::*};
 use ratatui::widgets::block::{Position, Title};
+use slab_tree::{NodeMut, Tree};
+use crate::backend::tree::nodes::LeafNodeType;
 
 //use termtree::Tree;
+
+struct SelectQuestion<'a> {
+    question: String,
+    options: StatefulList<'a>,
+    multiselect: bool,
+}
 
 enum InputMode {
     Normal,
@@ -50,7 +58,8 @@ impl<'a> StatefulList<'a>  {
             }
             None => 0,
         };
-        self.state.select(Some(i));
+        let i = self.state.selected().map(|i| i + 1 % self.items.len());
+        self.state.select(i);
     }
 
     fn previous(&mut self) {
@@ -89,9 +98,10 @@ impl<'a> StatefulList<'a>  {
 }
 
 struct App<'a> {
-    question: String,
+    tree: Tree<LeafNodeType>,
+    current_question: String,
     content: Data<'a>,
-    tree_content: String,
+    preview_tree: String,
     input: String,
     input_mode: InputMode,
     cursor_position: usize,
@@ -99,9 +109,10 @@ struct App<'a> {
 }
 
 impl<'a> App<'a> {
-    fn new(question: String, tree_content: String) -> App<'a> {
+    fn new(tree: Tree<LeafNodeType>, preview_content: String) -> App<'a> {
         App {
-            question,
+            tree,
+            current_question: String::from("nix"),
             content:Data::Select(StatefulList::with_items(vec![
                 ("item0", false),
                 ("item1", false),
@@ -110,12 +121,16 @@ impl<'a> App<'a> {
                 ("item4", false),
                 ("item5", false),
                 ], false)),
-            tree_content,
+            preview_tree: preview_content,
             input: String::new(),
             input_mode: InputMode::Normal,
             cursor_position: 0,
             output: String::new(),
         }
+    }
+
+    fn next_question(&mut self) {
+        let root = self.tree.root_mut().expect("root not found");
     }
     fn move_cursor_left(&mut self) {
         let cursor_moved_left = self.cursor_position.saturating_sub(1);
@@ -208,14 +223,14 @@ impl<'a> App<'a> {
 }
 
 
-pub fn init_ui() -> io::Result<()> {
+pub fn init_ui( mut tree: Tree<LeafNodeType>) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    let  app = App::new( String::from("Chose: "),String::from("Preview here"));
+    let  app = App::new( tree,String::from("Preview here"));
 
     let res = run_app(&mut terminal, app);
 
@@ -349,7 +364,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
             // Create a List from all list items and highlight the currently selected one
             let items = List::new(items)
-                .block(Block::default().borders(Borders::NONE).title(app.question.clone()))
+                .block(Block::default().borders(Borders::NONE).title(app.current_question.clone()))
                 .style(Style::default().fg(Color::White))
                 .highlight_style(Style::default().bg(Color::LightBlue).add_modifier(Modifier::BOLD))
                 .highlight_symbol("> ");
@@ -377,14 +392,14 @@ fn ui(f: &mut Frame, app: &mut App) {
             let text_input = String::from("> ") + content;
             f.render_widget(
                 Paragraph::new(text_input).wrap(Wrap {trim: false })
-                    .block(Block::default().borders(Borders::NONE).title(app.question.clone())),
+                    .block(Block::default().borders(Borders::NONE).title(app.current_question.clone())),
                 inner_layout[0],
             );
 
         }
     }
     f.render_widget(
-        Paragraph::new(app.tree_content.clone())
+        Paragraph::new(app.preview_tree.clone())
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
         inner_layout[1],
     );

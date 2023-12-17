@@ -7,7 +7,7 @@ pub enum LeafNodeType {
 }
 
 impl LeafNodeType {
-    fn get_name(&self) -> &str {
+    pub(crate) fn get_name(&self) -> &str {
         match self {
             LeafNodeType::Text { name } => { name }
             LeafNodeType::Option { name, .. } => { name }
