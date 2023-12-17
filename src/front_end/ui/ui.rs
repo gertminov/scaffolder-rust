@@ -1,67 +1,58 @@
 use std::{
     //error::Error,
     io,
-    fmt,
 };
+//use std::ops::Deref;
+//use std::any::Any;
+//use std::arch::x86_64::_mm256_sqrt_pd;
+//use std::fmt::Debug;
+
 
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-
 use ratatui::{prelude::*, widgets::*};
 use ratatui::widgets::block::{Position, Title};
-use slab_tree::{NodeMut, Tree};
+//use serde_yaml::Value::String;
+use slab_tree::*;
 use crate::backend::tree::nodes::LeafNodeType;
 
-//use termtree::Tree;
-
-struct SelectQuestion<'a> {
-    question: String,
-    options: StatefulList<'a>,
-    multiselect: bool,
-}
 
 enum InputMode {
     Normal,
     Editing,
 }
 
-enum Data<'a> {
-    Select(StatefulList<'a>),
-    TextInput(String),
-}
-
-struct StatefulList<'a> {
+pub struct StatefulList {
     state: ListState,
-    items: Vec<(&'a str, bool)>,
+    items: Vec<(String, bool)>,
     multiselect: bool,
 }
-impl<'a> StatefulList<'a>  {
-    fn with_items(items: Vec<(&'a str, bool)>, multiselect: bool) -> StatefulList {
+
+impl StatefulList {
+    pub fn with_items(items: Vec<(String, bool)>, multiselect: bool) -> StatefulList {
         StatefulList {
             state: ListState::default(),
             items,
             multiselect,
         }
     }
-
+    pub fn join_names_with(&self, separator: &str) -> String {
+        let vec: Vec<String> = self.items.iter().map(|(name, _)| name.clone()).collect();
+        return vec.join(separator);
+    }
+    pub fn clone(&self) -> StatefulList {
+        return StatefulList { state: self.state.clone(), items: self.items.clone(), multiselect: self.multiselect.clone() };
+    }
     fn next(&mut self) {
         let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.items.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
-            }
+            Some(i) => (i + 1) % self.items.len(),
             None => 0,
         };
-        let i = self.state.selected().map(|i| i + 1 % self.items.len());
-        self.state.select(i);
+        self.state.select(Some(i));
     }
-
     fn previous(&mut self) {
         let i = match self.state.selected() {
             Some(i) => {
@@ -75,62 +66,57 @@ impl<'a> StatefulList<'a>  {
         };
         self.state.select(Some(i));
     }
-
-    fn unselect(&mut self) {
-        self.state.select(None);
-    }
-    fn mark_item(&mut self) -> &str {
+    fn mark_item(&mut self) -> String {
         let item_pos = self.state.selected();
         match item_pos {
             Some(_) => {
                 //if not multiselect remove clear selection
                 if !self.multiselect {
-                        for i in self.items.iter_mut() { i.1 = false; }
-                    }
+                    for i in self.items.iter_mut() { i.1 = false; }
+                }
                 //mark current item
                 self.items[item_pos.unwrap()].1 = !self.items[item_pos.unwrap()].1;
 
-                self.items[item_pos.unwrap()].0
+                self.items[item_pos.unwrap()].0.clone()
             }
-            None => {"please make a selection"}//self.output = String::from("please make a selection")
+            None => { String::from("please make a selection") }//self.output = String::from("please make a selection")
         }
     }
 }
 
-struct App<'a> {
-    tree: Tree<LeafNodeType>,
-    current_question: String,
-    content: Data<'a>,
-    preview_tree: String,
-    input: String,
+struct App {
+    question: String,
+
     input_mode: InputMode,
     cursor_position: usize,
+
+    //content: LeafNodeType,
+    node_id: NodeId,
+    tree: Tree<LeafNodeType>,
+    formatted_tree: String,
     output: String,
 }
 
-impl<'a> App<'a> {
-    fn new(tree: Tree<LeafNodeType>, preview_content: String) -> App<'a> {
+impl App {
+    fn new(formatted_tree: String, tree: Tree<LeafNodeType>) -> App {
+        let node_id = tree.root_id().expect("tree has no root");
+        //let content = tree.get(node_id).unwrap().data().clone();
         App {
+            //content,
+            question: String::new(),
+            formatted_tree,
             tree,
-            current_question: String::from("nix"),
-            content:Data::Select(StatefulList::with_items(vec![
-                ("item0", false),
-                ("item1", false),
-                ("item2", false),
-                ("item3", false),
-                ("item4", false),
-                ("item5", false),
-                ], false)),
-            preview_tree: preview_content,
-            input: String::new(),
+            node_id,
             input_mode: InputMode::Normal,
             cursor_position: 0,
             output: String::new(),
         }
     }
-
-    fn next_question(&mut self) {
-        let root = self.tree.root_mut().expect("root not found");
+    fn data_cloned(&self) -> Option<LeafNodeType> {
+        if let Some(node) = self.tree.get(self.node_id) {
+            return Some(node.data().clone());
+        }
+        return None;
     }
     fn move_cursor_left(&mut self) {
         let cursor_moved_left = self.cursor_position.saturating_sub(1);
@@ -141,96 +127,117 @@ impl<'a> App<'a> {
         self.cursor_position = self.clamp_cursor(cursor_moved_right);
     }
     fn enter_char(&mut self, new_char: char) {
-        match &mut self.content {
-            Data::TextInput(input) => {
-                input.insert(self.cursor_position, new_char);
-                self.move_cursor_right();
-            }
-            _=> {}
-        }
-
-    }
-    fn delete_char(&mut self) {
-        match &mut self.content {
-            Data::TextInput(input) => {
-                let is_not_cursor_leftmost = self.cursor_position != 0;
-                if is_not_cursor_leftmost {
-                    // Method "remove" is not used on the saved text for deleting the selected char.
-                    // Reason: Using remove on String works on bytes instead of the chars.
-                    // Using remove would require special care because of char boundaries.
-
-                    let current_index = self.cursor_position;
-                    let from_left_to_current_index = current_index - 1;
-
-                    // Getting all characters before the selected character.
-                    let before_char_to_delete = input.chars().take(from_left_to_current_index);
-                    // Getting all characters after selected character.
-                    let after_char_to_delete = input.chars().skip(current_index);
-
-                    // Put all characters together except the selected one.
-                    // By leaving the selected one out, it is forgotten and therefore deleted.
-                    *input = before_char_to_delete.chain(after_char_to_delete).collect();
-                    self.move_cursor_left();
+        let node_opt = self.tree.get_mut(self.node_id);
+        match node_opt {
+            Some(mut node) => {
+                match node.data() {
+                    LeafNodeType::TextInput { name: _name, input } => {
+                        input.insert(self.cursor_position, new_char);
+                        self.move_cursor_right();
+                    }
+                    _ => {}
                 }
             }
-            _ => {}
+            None => {}
         }
     }
-    fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-        match &self.content {
-            Data::TextInput(input) => { new_cursor_pos.clamp(0, input.len()) },
-
-            _ => {1}
+    fn delete_char(&mut self) {
+        if let Some(mut node) = self.tree.get_mut(self.node_id) {
+            match node.data() {
+                LeafNodeType::TextInput { name: _name, input } => {
+                    let is_not_cursor_leftmost = self.cursor_position != 0;
+                    if is_not_cursor_leftmost {
+                        input.remove(self.cursor_position - 1);
+                        self.move_cursor_left();
+                    }
+                }
+                _ => {}
+            }
         }
+    }
+    fn clamp_cursor(&mut self, new_cursor_pos: usize) -> usize {
+        if let Some(data) = self.data_cloned() {
+            match data {
+                LeafNodeType::TextInput { name: _name, input } => { new_cursor_pos.clamp(0, input.len()) }
+                _ => { 1 }
+            }
+        } else { 0 }
     }
     fn reset_cursor(&mut self) {
         self.cursor_position = 0;
     }
     fn cursor_end(&mut self) {
-        match &self.content {
-            Data::TextInput(input) => {
-                self.cursor_position = input.len();
-            },
+        if let Some(data) = self.data_cloned() {
+            match data {
+                LeafNodeType::TextInput { name: _name, input } => {
+                    self.cursor_position = input.len();
+                }
 
-            _ => {}
+                _ => {}
+            }
         }
-
     }
-    /*fn submit_message(&mut self) {
-        self.messages.push(self.input.clone());
-        self.input.clear();
-        self.reset_cursor();
-    }*/
-
-    fn next_content(&mut self) {
-        self.content = Data::TextInput(String::from("test"))
+    fn next_item(&mut self, skip_child: bool) {
+        if let Some(node) = self.tree.get(self.node_id) {
+            if !skip_child {
+                if let Some(child) = node.first_child() {
+                    self.node_id = child.node_id();
+                    self.set_question();
+                }
+            } else if let Some(sibling) = node.next_sibling() {
+                self.node_id = sibling.node_id();
+                self.set_question()
+            } else if let Some(parent) = node.parent() {
+                self.node_id = parent.node_id();
+                self.next_item(true);
+            }
+            /*
+            let children: Vec<&LeafNodeType> = node.children().map(|c| c.data()).collect();
+            if !children.is_empty() {
+                //let content_vec = children.iter().map(|d| (String::from(d.get_name()), false)).collect();
+                //self.content = Data::Select(StatefulList::with_items(content_vec, true));
+            }*/
+        }
     }
-/*
     fn previous_item(&mut self) {
+        if let Some(node) = self.tree.get(self.node_id) {
+            if let Some(sibling) = node.prev_sibling() {
+                self.node_id = sibling.node_id();
+                self.set_question();
+            } else if let Some(parent) = node.parent() {
+                self.node_id = parent.node_id();
+                self.set_question();
+            }
+        }
     }
-
-    fn parent() {
+    fn set_question(&mut self) {
+        if let Some(node) = self.tree.get(self.node_id) {
+            match node.data() {
+                LeafNodeType::TextInput { name, input: _input } => {
+                    self.question = String::from("Type in a ") + name.as_str();
+                }
+                LeafNodeType::Option { name, options: _options } => {
+                    self.question = String::from("Chose an option for ") + name.as_str()
+                }
+                _ => {}
+            }
+        }
     }
-
-    fn next_parent() {
-    }
-
-    fn previous_parent() {
-    }
-
-*/
-
 }
 
 
-pub fn init_ui( mut tree: Tree<LeafNodeType>) -> io::Result<()> {
+pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    let  app = App::new( tree,String::from("Preview here"));
+    let mut formatted_tree = String::new();
+    let _ = tree.write_formatted(&mut formatted_tree);
+
+    let mut app = App::new(formatted_tree, tree);
+    app.set_question();
 
     let res = run_app(&mut terminal, app);
 
@@ -252,61 +259,63 @@ pub fn init_ui( mut tree: Tree<LeafNodeType>) -> io::Result<()> {
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
-    ) -> io::Result<()> {
+) -> io::Result<()> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
-            if let Event::Key(key) = event::read()? {
-                match &app.input_mode {
-                    InputMode::Normal if key.kind == KeyEventKind::Press =>
-                        match &mut app.content {
-                            Data::Select(list) => match key.code {
-                                KeyCode::Char('q') | KeyCode::Esc=> return Ok(()),
+        if let Event::Key(key) = event::read()? {
+            match &app.input_mode {
+                InputMode::Normal if key.kind == KeyEventKind::Press => {
+                    let mut node = app.tree.get_mut(app.node_id).unwrap();
 
-                                KeyCode::Left => list.unselect(),
-                                KeyCode::Down => list.next(),
-                                KeyCode::Up =>   list.previous(),
-                                KeyCode::Enter => {list.mark_item();},
-                                KeyCode::Tab => {list.multiselect = !list.multiselect },
-                                KeyCode::Right => app.next_content(),
-                                _ => {}
+                        match node.data() {
+                            LeafNodeType::Option { options, name: _name } => {
+                                match key.code {
+                                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+
+                                    KeyCode::Down =>  options.next(),
+                                    KeyCode::Up => options.previous(),
+                                    KeyCode::Enter => { options.mark_item(); app.next_item(false); },
+                                    //KeyCode::Tab => { options.multiselect = !options.multiselect },
+                                    KeyCode::Right => app.next_item(false),
+                                    KeyCode::Left => app.previous_item(),
+                                    _ => {}
+                                }
                             }
-                            Data::TextInput(_) => match key.code {
+                            LeafNodeType::TextInput { name: _name, input: _input } => match key.code {
                                 KeyCode::Char('e') | KeyCode::Down | KeyCode::Enter => {
                                     app.input_mode = InputMode::Editing;
                                     app.cursor_end();
                                 }
-                                KeyCode::Right => app.next_content(),
-
-                                KeyCode::Char('q') | KeyCode::Esc=> return Ok(()),
-                                _=> {}
+                                KeyCode::Right => app.next_item(false),
+                                KeyCode::Left => app.previous_item(),
+                                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                _ => {}
                             }
+                            _ => {}
                         }
-
-                    InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
-                        //KeyCode::Enter => app.submit_message(),
-                        KeyCode::Char(to_insert) => {
-                            if to_insert.is_ascii() {
-                                app.enter_char(to_insert);
-                            }
-                            else {
-                                app.output = String::from("Non-ASCII char is not allowed");
-                            }
-                        }
-
-                        KeyCode::Backspace => { app.delete_char(); }
-                        KeyCode::Left => { app.move_cursor_left(); }
-                        KeyCode::Right => { app.move_cursor_right(); }
-                        KeyCode::Esc | KeyCode::Up => { app.input_mode = InputMode::Normal; }
-                        KeyCode::End => { app.cursor_end(); }
-                        KeyCode::Home => { app.reset_cursor(); }
-                        _ => {}
-
-                    }
-                    _ => {}
-
                 }
+                InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
+                    //KeyCode::Enter => app.submit_message(),
+                    KeyCode::Char(to_insert) => {
+                        if to_insert.is_ascii() {
+                            app.enter_char(to_insert);
+                        } else {
+                            app.output = String::from("Non-ASCII char is not allowed");
+                        }
+                    }
+                    KeyCode::Enter => app.next_item(false),
+                    KeyCode::Backspace => { app.delete_char(); }
+                    KeyCode::Left => { app.move_cursor_left(); }
+                    KeyCode::Right => { app.move_cursor_right(); }
+                    KeyCode::Esc | KeyCode::Up => { app.input_mode = InputMode::Normal; }
+                    KeyCode::End => { app.cursor_end(); }
+                    KeyCode::Home => { app.reset_cursor(); }
+                    _ => {}
+                }
+                _ => {}
             }
+        }
     }
 }
 
@@ -320,11 +329,10 @@ fn ui(f: &mut Frame, app: &mut App) {
         ])
         .split(f.size());
 
-    let padding = Padding::uniform(10);
     f.render_widget(
         Block::new().borders(Borders::TOP)
             .title(
-                Title::from(" Project Scaffolder ").position(Position::Top).alignment(Alignment::Center),
+                Title::from(" Project Scaffold ").position(Position::Top).alignment(Alignment::Center),
             )
             .title(
                 Title::from(" Press q to quit").position(Position::Top).alignment(Alignment::Right),
@@ -339,12 +347,13 @@ fn ui(f: &mut Frame, app: &mut App) {
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(main_layout[1]);
 
-    match &app.content {
-        Data::Select(list) => {
+    let data = app.data_cloned().unwrap();
+    match data {
+        LeafNodeType::Option { name: _name, options } => {
 
             // Iterate through all elements in the `items`
             let items: Vec<ListItem> =
-                list.items
+                options.items
                     .iter()
                     .map(|i| {
                         let mut style = Style::default();
@@ -353,7 +362,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                             content = String::from("[x] ");
                             style = Style::default().fg(Color::Yellow);
                         }
-                        content.push_str(i.0);
+                        content.push_str(i.0.as_str());
 
                         let lines = vec![
                             Line::styled(content, style)
@@ -364,18 +373,17 @@ fn ui(f: &mut Frame, app: &mut App) {
 
             // Create a List from all list items and highlight the currently selected one
             let items = List::new(items)
-                .block(Block::default().borders(Borders::NONE).title(app.current_question.clone()))
+                .block(Block::default().borders(Borders::NONE).title(app.question.clone()))
                 .style(Style::default().fg(Color::White))
                 .highlight_style(Style::default().bg(Color::LightBlue).add_modifier(Modifier::BOLD))
                 .highlight_symbol("> ");
 
-            let mut state = list.state.clone();
+            let mut state = options.state.clone();
             // We can now render the item list
             f.render_stateful_widget(items, inner_layout[0], &mut state);
         }
 
-        Data::TextInput(content) => {
-
+        LeafNodeType::TextInput { name: _name, input } => {
             match &app.input_mode {
                 InputMode::Normal => {}
                 // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
@@ -384,22 +392,22 @@ fn ui(f: &mut Frame, app: &mut App) {
                 InputMode::Editing => {
                     // Make the cursor visible
                     f.set_cursor(
-                        main_layout[1].x + app.cursor_position as u16  + 3,
+                        main_layout[1].x + app.cursor_position as u16 + 3,
                         main_layout[1].y + 2,
                     )
                 }
             }
-            let text_input = String::from("> ") + content;
+            let text_input = String::from("> ") + input.as_str();
             f.render_widget(
-                Paragraph::new(text_input).wrap(Wrap {trim: false })
-                    .block(Block::default().borders(Borders::NONE).title(app.current_question.clone())),
+                Paragraph::new(text_input).wrap(Wrap { trim: false })
+                    .block(Block::default().borders(Borders::NONE).title(app.question.clone())),
                 inner_layout[0],
             );
-
         }
+        _ => {}
     }
     f.render_widget(
-        Paragraph::new(app.preview_tree.clone())
+        Paragraph::new(app.formatted_tree.clone())
             .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
         inner_layout[1],
     );
@@ -413,47 +421,3 @@ fn ui(f: &mut Frame, app: &mut App) {
 }
 
 
-
-
-/*
-fn ui(frame: &mut Frame) {
-    let main_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Length(1),
-        ])
-        .split(frame.size());
-
-    frame.render_widget(
-        Block::new().borders(Borders::ALL).title("Title Bar"),
-        main_layout[0],
-    );
-
-    let inner_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(50),
-            Constraint::Percentage(50)])
-        .split(main_layout[1]);
-
-    let left_block = Block::default().borders(Borders::NONE);
-    frame.render_widget(
-        Block::default().borders(Borders::ALL).title("Preview"),
-        inner_layout[1],
-    );
-
-    let items = [ListItem::new("Item 1"), ListItem::new("Item 2"), ListItem::new("Item 3")];
-    let list =List::new(items)
-        .block(left_block)
-        .style(Style::default().fg(Color::White))
-        .highlight_style(Style::default().add_modifier(Modifier::ITALIC))
-        .highlight_symbol(">>");
-    frame.render_widget(
-        list,
-        inner_layout[0],
-
-    );
-}
-*/

@@ -6,27 +6,19 @@ use slab_tree::*;
 use slab_tree::NodeMut;
 use crate::backend;
 use backend::tree::nodes::LeafNodeType;
+use crate::front_end::ui::ui::StatefulList;
 
 
 pub fn parse_project_yaml(yaml_str: &str) -> Tree<LeafNodeType> {
     let de = serde_yaml::Deserializer::from_str(yaml_str);
-    let value = Value::deserialize(de).expect("error while deserialzing yaml file");
+    let value = Value::deserialize(de).expect("error while deserialzing");
     let mapping = value.as_mapping().expect("No Mapping");
-    let project = mapping.get("project")
-        .map(|p| p.as_mapping())
-        .flatten()
-        .expect("No Project");
-
-    let default_location = project.get("default_location")
-        .map(|l| l.as_str())
-        .flatten()
-        .unwrap_or("~/");
-
+    let project = mapping.get("project").map(|p| p.as_mapping()).flatten().expect("No Project");
+    let default_location = project.get("default_location").map(|l| l.as_str()).flatten().unwrap_or("~/");
     let root_node = LeafNodeType::TextInput {
         name: "Location".to_string(),
         input: default_location.to_string(),
     };
-
     let mut tree = TreeBuilder::new().with_root(root_node).build();
     walk_project(project, &mut tree.root_mut().unwrap());
 
@@ -97,7 +89,7 @@ fn get_node_type(project: &Mapping, name: &str, child_options: &Option<Vec<Strin
 
     return if let Some(opt_list) = all_options {
         LeafNodeType::Option {
-            options: opt_list,
+            options: StatefulList::with_items(opt_list.iter().map(|i| (i.clone(), false)).collect(), false),
             name: name.to_string(),
         }
     } else if let Some(opt_str) = options.map(|o| o.as_str()).flatten() {
