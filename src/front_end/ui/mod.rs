@@ -1,8 +1,8 @@
 use std::{error::Error, io};
-use slab_tree::Tree;
-use crate::backend;
-use backend::tree::nodes::LeafNodeType;
-mod ui;
+use crate::backend::tree::nodes::LeafNodeType;
+use slab_tree::*;
+
+pub(crate) mod ui;
 
 pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()>{
     ui::init_ui(tree)
