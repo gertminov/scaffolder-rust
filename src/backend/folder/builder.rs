@@ -15,6 +15,7 @@ fn walk_tree(node: NodeRef<LeafNodeType>, parent_path: &PathBuf){
     create_folder(&dir_path);
     node.children().for_each(|child| {
         walk_tree(child, &dir_path)
+
     });
 }
 
