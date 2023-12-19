@@ -11,7 +11,7 @@ use crossterm::{
 use ratatui::{prelude::*, widgets::*};
 use ratatui::widgets::block::{Position, Title};
 use slab_tree::*;
-use crate::backend::tree::nodes::LeafNodeType;
+use crate::backend::tree::nodes::{LeafNodeType, CloneTree, NodeIndex};
 
 
 enum InputMode {
@@ -89,16 +89,18 @@ struct App {
 
     node_id: NodeId,
     tree: Tree<LeafNodeType>,
-    formatted_tree: String,
+    preview_tree: Tree<LeafNodeType>,
+    vertical_index: usize,
     output: String,
 }
 impl App {
-    fn new(formatted_tree: String, tree: Tree<LeafNodeType>) -> App {
+    fn new(tree: Tree<LeafNodeType>) -> App {
         let node_id = tree.root_id().expect("tree has no root");
         App {
             window: WindowType::App,
             question: String::new(),
-            formatted_tree,
+            vertical_index: 0,
+            preview_tree: tree.clone(),
             tree,
             node_id,
             input_mode: InputMode::Normal,
@@ -172,56 +174,45 @@ impl App {
     }
     fn next_item(&mut self, skip_child: bool) {
         if let Some(node) = self.tree.get(self.node_id) {
-            if !skip_child {
-                if let Some(child) = node.first_child() {
-                    self.node_id = child.node_id();
-                    match child.data() {
-                        LeafNodeType::Text { name: _name } => {
-                            self.next_item(false);
-                        }
-                        _ => {}
+
+            let first_child_opt = node.first_child();
+
+            if !skip_child && first_child_opt.is_some() {
+                let child = first_child_opt.unwrap();
+                self.node_id = child.node_id();
+                match child.data() {
+                    LeafNodeType::Text { name: _name } => {
+                        self.next_item(false);
                     }
-                    self.set_question();
-                } else if let Some(sibling) = node.next_sibling() {
-                    self.node_id = sibling.node_id();
-                    match sibling.data() {
-                        LeafNodeType::Text { name: _name } => {
-                            self.next_item(false);
-                        }
-                        _ => {}
-                    }
-                    self.set_question();
-                } else if let Some(parent) = node.parent() {
-                    self.output = String::from(parent.data().get_name());
-                    self.node_id = parent.node_id();
-                    self.next_item(true);
+                    _ => {}
                 }
-            } else {
-                if let Some(sibling) = node.next_sibling() {
-                    self.node_id = sibling.node_id();
-                    match sibling.data() {
-                        LeafNodeType::Text { name: _name } => {
-                            self.next_item(false);
-                        }
-                        _ => {}
+                self.set_question();
+            } else if let Some(sibling) = node.next_sibling() {
+                self.node_id = sibling.node_id();
+                match sibling.data() {
+                    LeafNodeType::Text { name: _name } => {
+                        self.next_item(false);
                     }
-                    self.set_question();
-                } else if let Some(parent) = node.parent() {
-                    self.output = String::from(parent.data().get_name());
-                    self.node_id = parent.node_id();
-                    self.next_item(true);
+                    _ => {}
                 }
+                self.set_question();
+            } else if let Some(parent) = node.parent() {
+                self.node_id = parent.node_id();
+                self.next_item(true);
             }
-        }
-        //self.set_editing_mode();
+
+            self.vertical_index = self.tree.node_index(self.node_id);
+        }   //self.set_editing_mode();
     }
     fn previous_item(&mut self) {
         if let Some(node) = self.tree.get(self.node_id) {
             if let Some(sibling) = node.prev_sibling() {
                 self.node_id = sibling.node_id();
+                self.vertical_index = self.tree.node_index(self.node_id);
                 self.set_question();
             } else if let Some(parent) = node.parent() {
                 self.node_id = parent.node_id();
+                self.vertical_index = self.tree.node_index(self.node_id);
                 self.set_question();
             }
         }
@@ -260,10 +251,7 @@ pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
 
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
 
-    let mut formatted_tree = String::new();
-    let _ = tree.write_formatted(&mut formatted_tree);
-
-    let mut app = App::new(formatted_tree, tree);
+    let mut app = App::new( tree);
     app.set_question();
     //app.set_editing_mode();
     let res = run_app(&mut terminal, app);
@@ -463,8 +451,18 @@ fn ui(f: &mut Frame, app: &mut App) {
                 }
                 _ => {}
             }
+            let mut formatted_preview_tree = String::new();
+            let _ = app.preview_tree.write_formatted(&mut formatted_preview_tree);
+            let vec_of_preview_tree: Vec<Line> = formatted_preview_tree.lines().into_iter().enumerate().map(|(i,l)| {
+                if i == app.vertical_index {
+                    Line::from(l.bg(Color::LightMagenta))
+                } else {
+                    Line::from(l)
+                }
+            }).collect();
+
             f.render_widget(
-                Paragraph::new(app.formatted_tree.clone())
+                Paragraph::new(vec_of_preview_tree)
                     .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
                 inner_layout[1],
             );
