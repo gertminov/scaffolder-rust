@@ -36,13 +36,13 @@ pub trait NodeIndex{
 impl NodeIndex for Tree<LeafNodeType> {
     fn node_index(&self, node_id: NodeId) -> usize {
         fn index(node: NodeRef<LeafNodeType>, vertical_index: &mut usize, node_id: NodeId, recursive_break:  &mut bool) {
-            if *recursive_break { return; }
+
             for child in node.children() {
                 if child.node_id() == node_id{
                     *recursive_break = true;
                     *vertical_index += 1;
                     return;
-                }
+                } else if *recursive_break { return; }
                 *vertical_index += 1;
                 index(child, vertical_index, node_id, recursive_break);
             }
