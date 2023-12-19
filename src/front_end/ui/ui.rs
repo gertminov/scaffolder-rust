@@ -172,31 +172,45 @@ impl App {
     }
     fn next_item(&mut self, skip_child: bool) {
         if let Some(node) = self.tree.get(self.node_id) {
-            if let Some(child) = node.first_child() {
-                if !skip_child {
+            if !skip_child {
+                if let Some(child) = node.first_child() {
                     self.node_id = child.node_id();
                     match child.data() {
-                        LeafNodeType::Text {name: _name} => {
+                        LeafNodeType::Text { name: _name } => {
                             self.next_item(false);
                         }
                         _ => {}
                     }
                     self.set_question();
-
-                }
-            } else if let Some(sibling) = node.next_sibling() {
-                self.node_id = sibling.node_id();
-                match sibling.data() {
-                    LeafNodeType::Text {name: _name} => {
-                        self.next_item(false);
+                } else if let Some(sibling) = node.next_sibling() {
+                    self.node_id = sibling.node_id();
+                    match sibling.data() {
+                        LeafNodeType::Text { name: _name } => {
+                            self.next_item(false);
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                    self.set_question();
+                } else if let Some(parent) = node.parent() {
+                    self.output = String::from(parent.data().get_name());
+                    self.node_id = parent.node_id();
+                    self.next_item(true);
                 }
-                self.set_question();
-
-            } else if let Some(parent) = node.parent() {
-                self.node_id = parent.node_id();
-                self.next_item(true);
+            } else {
+                if let Some(sibling) = node.next_sibling() {
+                    self.node_id = sibling.node_id();
+                    match sibling.data() {
+                        LeafNodeType::Text { name: _name } => {
+                            self.next_item(false);
+                        }
+                        _ => {}
+                    }
+                    self.set_question();
+                } else if let Some(parent) = node.parent() {
+                    self.output = String::from(parent.data().get_name());
+                    self.node_id = parent.node_id();
+                    self.next_item(true);
+                }
             }
         }
         //self.set_editing_mode();
