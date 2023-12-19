@@ -1,21 +1,15 @@
 use std::{
-    //error::Error,
     io,
 };
-//use std::ops::Deref;
-//use std::any::Any;
-//use std::arch::x86_64::_mm256_sqrt_pd;
-//use std::fmt::Debug;
-
 
 use crossterm::{
     event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+
 use ratatui::{prelude::*, widgets::*};
 use ratatui::widgets::block::{Position, Title};
-//use serde_yaml::Value::String;
 use slab_tree::*;
 use crate::backend::tree::nodes::LeafNodeType;
 
@@ -30,11 +24,10 @@ pub struct StatefulList {
     items: Vec<(String, bool)>,
     multiselect: bool,
 }
-
 impl StatefulList {
     pub fn with_items(items: Vec<(String, bool)>, multiselect: bool) -> StatefulList {
         StatefulList {
-            state: ListState::default(),
+            state: ListState::default().with_selected(Some(0)),
             items,
             multiselect,
         }
@@ -83,33 +76,34 @@ impl StatefulList {
         }
     }
 }
-
+enum WindowType {
+    Help,
+    App,
+}
 struct App {
     question: String,
 
+    window: WindowType,
     input_mode: InputMode,
     cursor_position: usize,
 
-    //content: LeafNodeType,
     node_id: NodeId,
     tree: Tree<LeafNodeType>,
     formatted_tree: String,
     output: String,
 }
-
 impl App {
     fn new(formatted_tree: String, tree: Tree<LeafNodeType>) -> App {
         let node_id = tree.root_id().expect("tree has no root");
-        //let content = tree.get(node_id).unwrap().data().clone();
         App {
-            //content,
+            window: WindowType::App,
             question: String::new(),
             formatted_tree,
             tree,
             node_id,
             input_mode: InputMode::Normal,
             cursor_position: 0,
-            output: String::new(),
+            output: String::from("Press h for tooltips"),
         }
     }
     fn data_cloned(&self) -> Option<LeafNodeType> {
@@ -172,32 +166,40 @@ impl App {
                 LeafNodeType::TextInput { name: _name, input } => {
                     self.cursor_position = input.len();
                 }
-
                 _ => {}
             }
         }
     }
     fn next_item(&mut self, skip_child: bool) {
         if let Some(node) = self.tree.get(self.node_id) {
-            if !skip_child {
-                if let Some(child) = node.first_child() {
+            if let Some(child) = node.first_child() {
+                if !skip_child {
                     self.node_id = child.node_id();
+                    match child.data() {
+                        LeafNodeType::Text {name: _name} => {
+                            self.next_item(false);
+                        }
+                        _ => {}
+                    }
                     self.set_question();
+
                 }
             } else if let Some(sibling) = node.next_sibling() {
                 self.node_id = sibling.node_id();
-                self.set_question()
+                match sibling.data() {
+                    LeafNodeType::Text {name: _name} => {
+                        self.next_item(false);
+                    }
+                    _ => {}
+                }
+                self.set_question();
+
             } else if let Some(parent) = node.parent() {
                 self.node_id = parent.node_id();
                 self.next_item(true);
             }
-            /*
-            let children: Vec<&LeafNodeType> = node.children().map(|c| c.data()).collect();
-            if !children.is_empty() {
-                //let content_vec = children.iter().map(|d| (String::from(d.get_name()), false)).collect();
-                //self.content = Data::Select(StatefulList::with_items(content_vec, true));
-            }*/
         }
+        //self.set_editing_mode();
     }
     fn previous_item(&mut self) {
         if let Some(node) = self.tree.get(self.node_id) {
@@ -223,6 +225,17 @@ impl App {
             }
         }
     }
+    fn set_editing_mode(&mut self) {
+        if let Some(node) = self.tree.get(self.node_id) {
+            match node.data() {
+                LeafNodeType::TextInput {name: _name, input:_input} => {
+                    self.input_mode = InputMode::Editing;
+                    self.cursor_end();
+                }
+                _ => { self.input_mode = InputMode::Normal; }
+            }
+        }
+    }
 }
 
 
@@ -238,7 +251,7 @@ pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
 
     let mut app = App::new(formatted_tree, tree);
     app.set_question();
-
+    //app.set_editing_mode();
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
@@ -255,7 +268,6 @@ pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
     Ok(())
 }
 
-
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
@@ -264,68 +276,93 @@ fn run_app<B: Backend>(
         terminal.draw(|f| ui(f, &mut app))?;
 
         if let Event::Key(key) = event::read()? {
-            match &app.input_mode {
-                InputMode::Normal if key.kind == KeyEventKind::Press => {
-                    let mut node = app.tree.get_mut(app.node_id).unwrap();
-
-                        match node.data() {
-                            LeafNodeType::Option { options, name: _name } => {
-                                match key.code {
-                                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-
-                                    KeyCode::Down =>  options.next(),
-                                    KeyCode::Up => options.previous(),
-                                    KeyCode::Enter => { options.mark_item(); app.next_item(false); },
-                                    //KeyCode::Tab => { options.multiselect = !options.multiselect },
+            match &app.window {
+                WindowType::App => {
+                    match &app.input_mode {
+                        InputMode::Normal if key.kind == KeyEventKind::Press => {
+                            let mut node = app.tree.get_mut(app.node_id).unwrap();
+                            match node.data() {
+                                LeafNodeType::Option { options, name: _name } => {
+                                    match key.code {
+                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                        KeyCode::Char('h') => { app.window = WindowType::Help }
+                                        KeyCode::Down => options.next(),
+                                        KeyCode::Up => options.previous(),
+                                        KeyCode::Enter => {
+                                            options.mark_item();
+                                            app.next_item(false);
+                                        },
+                                        KeyCode::Right => app.next_item(false),
+                                        KeyCode::Left => app.previous_item(),
+                                        _ => {}
+                                    }
+                                }
+                                LeafNodeType::TextInput { name: _name, input: _input } => match key.code {
+                                    KeyCode::Char('i') | KeyCode::Char('e') | KeyCode::Down | KeyCode::Enter => {
+                                        app.input_mode = InputMode::Editing;
+                                        app.cursor_end();
+                                    }
                                     KeyCode::Right => app.next_item(false),
                                     KeyCode::Left => app.previous_item(),
+                                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                    KeyCode::Char('h') => { app.window = WindowType::Help }
                                     _ => {}
                                 }
-                            }
-                            LeafNodeType::TextInput { name: _name, input: _input } => match key.code {
-                                KeyCode::Char('e') | KeyCode::Down | KeyCode::Enter => {
-                                    app.input_mode = InputMode::Editing;
-                                    app.cursor_end();
+                                _ => {
+                                    match key.code {
+                                        KeyCode::Char('h') => { app.window = WindowType::Help }
+                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                        KeyCode::Left => app.previous_item(),
+                                        _ => {}
+                                    }
                                 }
-                                KeyCode::Right => app.next_item(false),
-                                KeyCode::Left => app.previous_item(),
-                                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                                _ => {}
                             }
+                        }
+                        InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
+                            //KeyCode::Enter => app.submit_message(),
+                            KeyCode::Char(to_insert) => {
+                                if to_insert.is_ascii() {
+                                    app.enter_char(to_insert);
+                                } else {
+                                    app.output = String::from("Non-ASCII char is not allowed");
+                                }
+                            }
+                            KeyCode::Enter => {
+                                app.next_item(false);
+                                app.input_mode = InputMode::Normal;
+                            }
+                            KeyCode::Backspace => { app.delete_char(); }
+                            KeyCode::Left => { app.move_cursor_left(); }
+                            KeyCode::Right => { app.move_cursor_right(); }
+                            KeyCode::Esc | KeyCode::Up => { app.input_mode = InputMode::Normal; }
+                            KeyCode::End => { app.cursor_end(); }
+                            KeyCode::Home => { app.reset_cursor(); }
                             _ => {}
                         }
+                        _ => {}
+                    }
                 }
-                InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
-                    //KeyCode::Enter => app.submit_message(),
-                    KeyCode::Char(to_insert) => {
-                        if to_insert.is_ascii() {
-                            app.enter_char(to_insert);
-                        } else {
-                            app.output = String::from("Non-ASCII char is not allowed");
+                WindowType::Help => {
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q')  => return Ok(()),
+                            _ => { app.window = WindowType::App }
                         }
                     }
-                    KeyCode::Enter => app.next_item(false),
-                    KeyCode::Backspace => { app.delete_char(); }
-                    KeyCode::Left => { app.move_cursor_left(); }
-                    KeyCode::Right => { app.move_cursor_right(); }
-                    KeyCode::Esc | KeyCode::Up => { app.input_mode = InputMode::Normal; }
-                    KeyCode::End => { app.cursor_end(); }
-                    KeyCode::Home => { app.reset_cursor(); }
-                    _ => {}
                 }
-                _ => {}
             }
         }
     }
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
+
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(1),
+            Constraint::Length(3),
         ])
         .split(f.size());
 
@@ -335,89 +372,131 @@ fn ui(f: &mut Frame, app: &mut App) {
                 Title::from(" Project Scaffold ").position(Position::Top).alignment(Alignment::Center),
             )
             .title(
-                Title::from(" Press q to quit").position(Position::Top).alignment(Alignment::Right),
-            )
-            .style(Style::default()),
+                Title {content: Line::styled(" Press q to quit ", Style::default().fg(Color::LightYellow)), alignment: Some(Alignment::Left), position: Some(Position::Top) },
+                //Title::from(" Press q | ESC to quit ").position(Position::Top).alignment(Alignment::Left),
+            ),
         main_layout[0],
     );
+    match app.window {
+        WindowType::App => {
+            let inner_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .margin(1)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(main_layout[1]);
 
-    let inner_layout = Layout::default()
-        .direction(Direction::Horizontal)
-        .margin(1)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(main_layout[1]);
-
-    let data = app.data_cloned().unwrap();
-    match data {
-        LeafNodeType::Option { name: _name, options } => {
-
-            // Iterate through all elements in the `items`
-            let items: Vec<ListItem> =
-                options.items
-                    .iter()
-                    .map(|i| {
-                        let mut style = Style::default();
-                        let mut content = String::from("[ ] ");
-                        if i.1 == true {
-                            content = String::from("[x] ");
-                            style = Style::default().fg(Color::Yellow);
-                        }
-                        content.push_str(i.0.as_str());
-
-                        let lines = vec![
-                            Line::styled(content, style)
-                        ];
-                        ListItem::new(lines)
-                    })
-                    .collect();
-
-            // Create a List from all list items and highlight the currently selected one
-            let items = List::new(items)
-                .block(Block::default().borders(Borders::NONE).title(app.question.clone()))
-                .style(Style::default().fg(Color::White))
-                .highlight_style(Style::default().bg(Color::LightBlue).add_modifier(Modifier::BOLD))
-                .highlight_symbol("> ");
-
-            let mut state = options.state.clone();
-            // We can now render the item list
-            f.render_stateful_widget(items, inner_layout[0], &mut state);
-        }
-
-        LeafNodeType::TextInput { name: _name, input } => {
-            match &app.input_mode {
-                InputMode::Normal => {}
-                // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
+            let bottom_layout = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Min(3), Constraint::Min(1)])
+                .margin(1)
+                .split(main_layout[2]);
 
 
-                InputMode::Editing => {
-                    // Make the cursor visible
-                    f.set_cursor(
-                        main_layout[1].x + app.cursor_position as u16 + 3,
-                        main_layout[1].y + 2,
-                    )
+            let data = app.data_cloned().expect("No data available to display");
+            match data {
+                LeafNodeType::Option { name: _name, options } => {
+                    // Iterate through all elements in the `items`
+                    let items: Vec<ListItem> =
+                        options.items
+                            .iter()
+                            .map(|i| {
+                                let mut style = Style::default();
+                                let mut content = String::from("[ ] ");
+                                if i.1 == true {
+                                    content = String::from("[x] ");
+                                    style = Style::default().fg(Color::LightYellow);
+                                }
+                                content.push_str(i.0.as_str());
+
+                                let lines = vec![
+                                    Line::styled(content, style)
+                                ];
+                                ListItem::new(lines)
+                            })
+                            .collect();
+
+                    // Create a List from all list items and highlight the currently selected one
+                    let items = List::new(items)
+                        .block(Block::default().borders(Borders::NONE).title(app.question.as_str().bold()))
+                        .style(Style::default().fg(Color::White))
+                        .highlight_style(Style::default().bg(Color::LightBlue).add_modifier(Modifier::BOLD))
+                        .highlight_symbol("> ");
+
+                    let mut state = options.state.clone();
+                    // We can now render the item list
+                    f.render_stateful_widget(items, inner_layout[0], &mut state);
                 }
+
+                LeafNodeType::TextInput { name: _name, input } => {
+                    match &app.input_mode {
+                        InputMode::Normal => {}
+                        // Hide the cursor. `Frame` does this by default, so we don't need to do anything here
+
+                        InputMode::Editing => {
+                            // Make the cursor visible
+                            f.set_cursor(
+                                main_layout[1].x + app.cursor_position as u16 + 3,
+                                main_layout[1].y + 2,
+                            )
+                        }
+                    }
+                    let text_input = String::from("> ") + input.as_str();
+                    f.render_widget(
+                        Paragraph::new(text_input).wrap(Wrap { trim: false })
+                            .block(Block::default().borders(Borders::NONE).title(app.question.as_str().bold())),
+                        inner_layout[0],
+                    );
+                }
+                _ => {}
             }
-            let text_input = String::from("> ") + input.as_str();
             f.render_widget(
-                Paragraph::new(text_input).wrap(Wrap { trim: false })
-                    .block(Block::default().borders(Borders::NONE).title(app.question.clone())),
-                inner_layout[0],
+                Paragraph::new(app.formatted_tree.clone())
+                    .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
+                inner_layout[1],
+            );
+
+            let input_indicator = match app.input_mode {
+                InputMode::Editing => {
+                    Paragraph::new("i:").style(Style::default().fg(Color::LightYellow).bold())
+                }
+                _ => {
+                    Paragraph::new("v:").style(Style::default().fg(Color::LightBlue).bold())
+                }
+            };
+            f.render_widget(
+                input_indicator
+                    .block(Block::default().borders(Borders::NONE)),
+                bottom_layout[0],
+            );
+
+            f.render_widget(
+                Paragraph::new(app.output.clone())
+                    .block(Block::default().borders(Borders::NONE)),
+                bottom_layout[1],
             );
         }
-        _ => {}
+        WindowType::Help => {
+            let inner_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([Constraint::Min(7), Constraint::Min(5)])
+                .split(main_layout[1]);
+
+            f.render_widget(
+                Paragraph::new("  q, ESC: quit application \n  i, ENTER: Select Item in a list or enter text editing mode \n  ←: Previous item \n  →: next item \n  ↑↓: go through a list")
+                    .block(Block::default().borders(Borders::NONE).title("Normal Mode (v):".bold())),
+                inner_layout[0],
+            );
+
+            f.render_widget(
+                Paragraph::new("  ESC, ↑: Exit text editing \n  ENTER: Submit Text")
+                    .block(Block::default().borders(Borders::NONE).title("Editing Mode (i):".bold())),
+                inner_layout[1],
+            );
+        }
     }
-    f.render_widget(
-        Paragraph::new(app.formatted_tree.clone())
-            .block(Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)),
-        inner_layout[1],
-    );
 
 
-    f.render_widget(
-        Paragraph::new(app.output.clone())
-            .block(Block::default().borders(Borders::NONE)),
-        main_layout[2],
-    );
 }
 
 
