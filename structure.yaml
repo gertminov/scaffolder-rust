@@ -25,4 +25,4 @@ project:
           - drei
         children:
           - test
-          - test2
+          - test2:

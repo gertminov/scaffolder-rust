@@ -3,7 +3,7 @@ use std::{
 };
 
 use crossterm::{
-    event::{self, DisableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -59,7 +59,7 @@ impl StatefulList {
         };
         self.state.select(Some(i));
     }
-    fn mark_item(&mut self) -> String {
+    fn mark_item(&mut self) -> Option<String> {
         let item_pos = self.state.selected();
         match item_pos {
             Some(_) => {
@@ -67,13 +67,25 @@ impl StatefulList {
                 if !self.multiselect {
                     for i in self.items.iter_mut() { i.1 = false; }
                 }
-                //mark current item
-                self.items[item_pos.unwrap()].1 = !self.items[item_pos.unwrap()].1;
+                if let Some(pos) = item_pos {
+                    //mark current item
+                    self.items[pos].1 = !self.items[pos].1;
+                    return None;
+                }
 
-                self.items[item_pos.unwrap()].0.clone()
+                Some(String::from("invalid selection"))
+
             }
-            None => { String::from("please make a selection") }//self.output = String::from("please make a selection")
+            None => { Some(String::from("please make a selection")) }
         }
+    }
+    fn get_selected(&self) -> Option<String> {
+        for item in self.items.clone() {
+            if item.1 {
+                return Some(item.0)
+            }
+        }
+        return None
     }
 }
 enum WindowType {
@@ -105,7 +117,7 @@ impl App {
             node_id,
             input_mode: InputMode::Normal,
             cursor_position: 0,
-            output: String::from("Press h for tooltips"),
+            output: String::from("Press h for help"),
         }
     }
     fn data_cloned(&self) -> Option<LeafNodeType> {
@@ -172,37 +184,49 @@ impl App {
             }
         }
     }
-    fn next_item(&mut self, skip_child: bool) {
-        if let Some(node) = self.tree.get(self.node_id) {
-
-            let first_child_opt = node.first_child();
-
-            if !skip_child && first_child_opt.is_some() {
-                let child = first_child_opt.unwrap();
-                self.node_id = child.node_id();
-                match child.data() {
-                    LeafNodeType::Text { name: _name } => {
-                        self.next_item(false);
+    fn next_item(&mut self, skip_child: bool) -> Option<Tree<String>> {
+        fn check_recursively(app: &mut App, skip_child: bool, end_reached: &mut bool) {
+            if let Some(node) = app.tree.get(app.node_id) {
+                let first_child_opt = node.first_child();
+                if !skip_child && first_child_opt.is_some() {
+                    let child = first_child_opt.expect("Error, next child data could not be unwrap, despite it existing");
+                    app.node_id = child.node_id();
+                    match child.data() {
+                        LeafNodeType::Text { name: _name } => {
+                            check_recursively(app, false, end_reached);
+                        }
+                        _ => {}
                     }
-                    _ => {}
-                }
-                self.set_question();
-            } else if let Some(sibling) = node.next_sibling() {
-                self.node_id = sibling.node_id();
-                match sibling.data() {
-                    LeafNodeType::Text { name: _name } => {
-                        self.next_item(false);
+                    app.set_question();
+                } else if let Some(sibling) = node.next_sibling() {
+                    app.node_id = sibling.node_id();
+                    match sibling.data() {
+                        LeafNodeType::Text { name: _name } => {
+                            check_recursively(app, false, end_reached);
+                        }
+                        _ => {}
                     }
-                    _ => {}
+                    app.set_question();
+                } else if let Some(parent) = node.parent() {
+                    app.node_id = parent.node_id();
+                    check_recursively(app, true, end_reached);
+                } else {
+                    app.vertical_index = app.tree.node_index(app.node_id);
+                    *end_reached = true;
+
                 }
-                self.set_question();
-            } else if let Some(parent) = node.parent() {
-                self.node_id = parent.node_id();
-                self.next_item(true);
+                app.vertical_index = app.tree.node_index(app.node_id);
             }
+        }
+        let mut end_reached = false;
+        check_recursively(self, skip_child, &mut end_reached);
 
-            self.vertical_index = self.tree.node_index(self.node_id);
-        }   //self.set_editing_mode();
+        if end_reached {
+            check_tree(&self.preview_tree)
+        } else {
+            None
+        }
+
     }
     fn previous_item(&mut self) {
         if let Some(node) = self.tree.get(self.node_id) {
@@ -241,19 +265,52 @@ impl App {
             }
         }
     }
+    fn update_preview_tree(&mut self) {
+        fn walk_tree(node: NodeRef<LeafNodeType>, cur_index: &mut usize, tree_index: usize, node_id: &mut NodeId) {
+            for child_ref in node.children() {
+                *cur_index += 1;
+                if *cur_index == tree_index {
+                    *node_id = child_ref.node_id();
+                    break
+                } else if *cur_index > tree_index {
+                    break
+                } else {
+                    walk_tree(child_ref, cur_index, tree_index, node_id);
+                }
+            }
+        }
+        let mut node_id = NodeId::from(self.preview_tree.root_id().expect("Error, Preview tree has no root"));
+        walk_tree(self.preview_tree.root().expect("Error, tree has no root"), &mut 0, self.vertical_index, &mut node_id);
+        if let Some(mut node) = self.preview_tree.get_mut(node_id) {
+            match self.tree.get(self.node_id).expect("Error, no node to nodeID").data() {
+                LeafNodeType::Text {name: _name} => {}
+                LeafNodeType::TextInput {name: _name, input} => {
+                    if !input.is_empty() {
+                        *node.data() = LeafNodeType::Text {name: input.clone()}
+                    }
+                }
+                LeafNodeType::Option {name: _name, options} => {
+                    if let Some(item) = options.get_selected() {
+                        *node.data() = LeafNodeType::Text{name: item}
+                    }
+                }
+            }
+        }
+
+    }
 }
 
 
-pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
+pub fn init_ui(tree: Tree<LeafNodeType>) -> Result<Option<Tree<String>>, io::Error> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-
-    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new( tree);
     app.set_question();
-    //app.set_editing_mode();
+    app.set_editing_mode();
     let res = run_app(&mut terminal, app);
 
     disable_raw_mode()?;
@@ -262,18 +319,11 @@ pub fn init_ui(tree: Tree<LeafNodeType>) -> io::Result<()> {
         LeaveAlternateScreen,
         DisableMouseCapture
     )?;
-
-    if let Err(err) = res {
-        println!("{err:?}");
-    }
-
-    Ok(())
+    terminal.show_cursor()?;
+    return res;
 }
 
-fn run_app<B: Backend>(
-    terminal: &mut Terminal<B>,
-    mut app: App,
-) -> io::Result<()> {
+fn run_app<B: Backend>( terminal: &mut Terminal<B>, mut app: App, ) -> Result<Option<Tree<String>>, io::Error> {
     loop {
         terminal.draw(|f| ui(f, &mut app))?;
 
@@ -282,19 +332,43 @@ fn run_app<B: Backend>(
                 WindowType::App => {
                     match &app.input_mode {
                         InputMode::Normal if key.kind == KeyEventKind::Press => {
-                            let mut node = app.tree.get_mut(app.node_id).unwrap();
+                            let mut node = app.tree.get_mut(app.node_id).expect("Unexpected Error, cannot get node from NodeID");
                             match node.data() {
                                 LeafNodeType::Option { options, name: _name } => {
                                     match key.code {
-                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
                                         KeyCode::Char('h') => { app.window = WindowType::Help }
+                                        KeyCode::Char('s') => {
+                                            app.update_preview_tree();
+                                            match check_tree(&app.preview_tree){
+                                                Some(tree) => {
+                                                    return Ok(Some(tree))},
+                                                None => { app.output = String::from("Cannot save, selection still missing"); }
+                                            }
+                                        }
                                         KeyCode::Down => options.next(),
                                         KeyCode::Up => options.previous(),
                                         KeyCode::Enter => {
-                                            options.mark_item();
-                                            app.next_item(false);
+                                            if let Some(err) = options.mark_item() {
+                                                app.output = err;
+                                            } else {
+                                                app.update_preview_tree();
+                                                match app.next_item(false) {
+                                                    Some(tree) => {
+                                                        println!("here");
+                                                        return Ok(Some(tree)); },
+                                                    None => {}
+                                                }
+                                                app.set_editing_mode();
+                                            }
                                         },
-                                        KeyCode::Right => app.next_item(false),
+                                        KeyCode::Right => {
+                                            app.update_preview_tree();
+                                            match app.next_item(false) {
+                                                Some(tree) => return Ok(Some(tree)),
+                                                None => {}
+                                            }
+                                        },
                                         KeyCode::Left => app.previous_item(),
                                         _ => {}
                                     }
@@ -304,16 +378,35 @@ fn run_app<B: Backend>(
                                         app.input_mode = InputMode::Editing;
                                         app.cursor_end();
                                     }
-                                    KeyCode::Right => app.next_item(false),
+                                    KeyCode::Right => {
+                                        app.update_preview_tree();
+                                        match app.next_item(false) {
+                                            Some(tree) => return Ok(Some(tree)),
+                                            None => {}
+                                        }
+                                    },
                                     KeyCode::Left => app.previous_item(),
-                                    KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                    KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
                                     KeyCode::Char('h') => { app.window = WindowType::Help }
+                                    KeyCode::Char('s') => {
+                                        app.update_preview_tree();
+                                        match check_tree(&app.preview_tree) {
+                                            Some(tree) => return Ok(Some(tree)),
+                                            None => {app.output = String::from("Cannot save, selection still missing");}
+                                        }
+                                    }
                                     _ => {}
                                 }
                                 _ => {
                                     match key.code {
                                         KeyCode::Char('h') => { app.window = WindowType::Help }
-                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
+                                        KeyCode::Char('q') | KeyCode::Esc => return Ok(None),
+                                        KeyCode::Char('s') => {
+                                            match check_tree(&app.preview_tree) {
+                                                Some(tree) => return Ok(Some(tree)),
+                                                None => {app.output = String::from("Cannot save, selection still missing");}
+                                            }
+                                        }
                                         KeyCode::Left => app.previous_item(),
                                         _ => {}
                                     }
@@ -321,7 +414,6 @@ fn run_app<B: Backend>(
                             }
                         }
                         InputMode::Editing if key.kind == KeyEventKind::Press => match key.code {
-                            //KeyCode::Enter => app.submit_message(),
                             KeyCode::Char(to_insert) => {
                                 if to_insert.is_ascii() {
                                     app.enter_char(to_insert);
@@ -330,8 +422,13 @@ fn run_app<B: Backend>(
                                 }
                             }
                             KeyCode::Enter => {
-                                app.next_item(false);
                                 app.input_mode = InputMode::Normal;
+                                app.update_preview_tree();
+                                match app.next_item(false) {
+                                    Some(tree) => return Ok(Some(tree)),
+                                    None => {}
+                                }
+                                app.set_editing_mode();
                             }
                             KeyCode::Backspace => { app.delete_char(); }
                             KeyCode::Left => { app.move_cursor_left(); }
@@ -347,13 +444,45 @@ fn run_app<B: Backend>(
                 WindowType::Help => {
                     if key.kind == KeyEventKind::Press {
                         match key.code {
-                            KeyCode::Char('q')  => return Ok(()),
+                            KeyCode::Char('q')  => return Ok(None),
                             _ => { app.window = WindowType::App }
                         }
                     }
                 }
             }
         }
+    }
+}
+
+fn check_tree(tree: &Tree<LeafNodeType>) -> Option<Tree<String>> {
+
+    let root_string = tree.root().expect("Error tree has no root").data().get_name();
+
+    let mut string_tree: Tree<String> = Tree::new();
+    let root = string_tree.set_root(String::from(root_string));
+
+    let mut partly_empty = false;
+    fn walk_tree(node: NodeRef<LeafNodeType>, mut output_node: NodeMut<String>, partly_empty: &mut bool) {
+        for child in node.children() {
+            match child.data() {
+                LeafNodeType::Text {name} => {
+                    if name.is_empty() {
+                        *partly_empty = true;
+                    }
+                    let string_node = output_node.append(String::from(name));
+                    walk_tree(child, string_node, partly_empty);
+                }
+                _ => {
+                    *partly_empty = true;
+                }
+            }
+        }
+    }
+    walk_tree(tree.root().expect("Error, tree has no root"), string_tree.get_mut(root).unwrap(), &mut partly_empty);
+    if partly_empty {
+        None
+    } else {
+        Some(string_tree)
     }
 }
 
@@ -364,7 +493,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .constraints([
             Constraint::Length(1),
             Constraint::Min(0),
-            Constraint::Length(3),
+            Constraint::Min(0),
         ])
         .split(f.size());
 
@@ -375,7 +504,6 @@ fn ui(f: &mut Frame, app: &mut App) {
             )
             .title(
                 Title {content: Line::styled(" Press q to quit ", Style::default().fg(Color::LightYellow)), alignment: Some(Alignment::Left), position: Some(Position::Top) },
-                //Title::from(" Press q | ESC to quit ").position(Position::Top).alignment(Alignment::Left),
             ),
         main_layout[0],
     );
@@ -469,7 +597,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
             let input_indicator = match app.input_mode {
                 InputMode::Editing => {
-                    Paragraph::new("i:").style(Style::default().fg(Color::LightYellow).bold())
+                    Paragraph::new("i:").style(Style::default().fg(Color::LightYellow).bold()).rapid_blink()
                 }
                 _ => {
                     Paragraph::new("v:").style(Style::default().fg(Color::LightBlue).bold())
@@ -491,24 +619,28 @@ fn ui(f: &mut Frame, app: &mut App) {
             let inner_layout = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Min(7), Constraint::Min(5)])
+                .constraints([Constraint::Min(9), Constraint::Min(4), Constraint::Min(1)])
                 .split(main_layout[1]);
 
             f.render_widget(
-                Paragraph::new("  q, ESC: quit application \n  i, ENTER: Select Item in a list or enter text editing mode \n  ←: Previous item \n  →: next item \n  ↑↓: go through a list")
+                Paragraph::new("  q, ESC: quit application \n  s: save and quit \n  ENT: Select Item in a list or enter text editing mode \n  i: Enter text editing mode \n  ←: Previous item \n  →: next item \n  ↑↓: go through a list")
                     .block(Block::default().borders(Borders::NONE).title("Normal Mode (v):".bold())),
                 inner_layout[0],
             );
 
             f.render_widget(
-                Paragraph::new("  ESC, ↑: Exit text editing \n  ENTER: Submit Text")
+                Paragraph::new("  ESC, ↑: Exit text editing \n  ENT: Submit Text")
                     .block(Block::default().borders(Borders::NONE).title("Editing Mode (i):".bold())),
                 inner_layout[1],
             );
+
+            f.render_widget(
+                Paragraph::new("Note: Under Windows using \"~\" instead of \"C:\\Users\\username\" does currently not work".italic())
+                    .block(Block::default().borders(Borders::NONE)),
+                inner_layout[2],
+            );
         }
     }
-
-
 }
 
 

@@ -96,9 +96,9 @@ impl Display for LeafNodeType {
             LeafNodeType::Text { name } => write!(f, "{}", name),
             LeafNodeType::Option { name, options } => {
                 let options_as_string: String = options.join_names_with(", ");
-                write!(f, "{:?} with [{}]", name, options_as_string)
+                write!(f, "{} with [{}]", name, options_as_string)
             }
-            LeafNodeType::TextInput { name, input } => write!(f, "{:?} input: {}", name, input),
+            LeafNodeType::TextInput { name, input } => write!(f, "{} input: {}", name, input),
             // Add formatting for additional variants
         }
     }
