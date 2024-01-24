@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use serde::Deserialize;
 use serde_yaml::{Mapping, Sequence, Value};
 use slab_tree::*;

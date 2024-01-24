@@ -117,7 +117,7 @@ impl App {
             node_id,
             input_mode: InputMode::Normal,
             cursor_position: 0,
-            output: String::from("Press h for help"),
+            output: String::from("Press ESC to exit i mode and h for help"),
         }
     }
     fn data_cloned(&self) -> Option<LeafNodeType> {
@@ -492,8 +492,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1),
-            Constraint::Min(0),
-            Constraint::Min(0),
+            Constraint::Min(3),
+            Constraint::Length(1),
         ])
         .split(f.size());
 
@@ -518,7 +518,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             let bottom_layout = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Min(3), Constraint::Min(1)])
-                .margin(1)
+                .horizontal_margin(1)
                 .split(main_layout[2]);
 
 
@@ -579,6 +579,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                 }
                 _ => {}
             }
+
             let mut formatted_preview_tree = String::new();
             let _ = app.preview_tree.write_formatted(&mut formatted_preview_tree);
             let vec_of_preview_tree: Vec<Line> = formatted_preview_tree.lines().into_iter().enumerate().map(|(i,l)| {
