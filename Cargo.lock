@@ -514,6 +514,7 @@ dependencies = [
  "serde_yaml",
  "slab_tree",
  "termtree",
+ "user-error",
 ]
 
 [[package]]
@@ -732,6 +733,12 @@ name = "unsafe-libyaml"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28467d3e1d3c6586d8f25fa243f544f5800fec42d97032474e17222c2b75cfa"
+
+[[package]]
+name = "user-error"
+version = "1.2.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "07a91d0648d862a02d641c82292791accfe66d36df75d8149ebc9768f2e36863"
 
 [[package]]
 name = "version_check"

@@ -5,7 +5,7 @@ pub mod backend;
 pub mod front_end;
 
 fn main() ->  Result<(), io::Error>{
-    let tree = backend::yaml::parse_yaml("./structure.yaml");
+    let tree = backend::yaml::parse_yaml("./template.yaml");
     let ui_res = front_end::ui::init_ui(tree);
 
     match ui_res {

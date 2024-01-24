@@ -12,7 +12,10 @@ pub fn parse_project_yaml(yaml_str: &str) -> Tree<LeafNodeType> {
     let value = Value::deserialize(de).expect("error while deserialzing");
     let mapping = value.as_mapping().expect("No Mapping");
     let project = mapping.get("project").map(|p| p.as_mapping()).flatten().expect("No Project");
-    let default_location = project.get("default_location").map(|l| l.as_str()).flatten().unwrap_or("~/");
+    let default_location = project.get("default_location")
+        .map(|l| l.as_str())
+        .flatten()
+        .expect("no value for default_location.\nplease provide a default_location in the template.yaml file");
     let root_node = LeafNodeType::TextInput {
         name: "Location".to_string(),
         input: default_location.to_string(),
